@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useState } from 'react';
 import { Question } from '../types';
 
 interface QuestionCardProps {
@@ -8,6 +8,49 @@ interface QuestionCardProps {
 }
 
 export const QuestionCard: React.FC<QuestionCardProps> = ({ question, selectedOptionId, onSelect }) => {
+  const [htmlEquation, setHtmlEquation] = useState<string>('');
+  const [error, setError] = useState<boolean>(false);
+
+  useEffect(() => {
+    // Reset state when question changes
+    setHtmlEquation('');
+    setError(false);
+
+    if (!question.equation) return;
+
+    const render = () => {
+      const katex = (window as any).katex;
+      if (!katex) return false;
+
+      try {
+        // Use renderToString for better React integration
+        const html = katex.renderToString(question.equation, {
+          throwOnError: false,
+          displayMode: true,
+          fleqn: false
+        });
+        setHtmlEquation(html);
+        return true;
+      } catch (e) {
+        console.error("KaTeX rendering error:", e);
+        setError(true);
+        return true; // Stop retrying
+      }
+    };
+
+    // Attempt render immediately
+    if (render()) return;
+
+    // Retry if KaTeX is not yet loaded (fallback)
+    const interval = setInterval(() => {
+      if (render()) {
+        clearInterval(interval);
+      }
+    }, 50);
+
+    return () => clearInterval(interval);
+  }, [question.equation]);
+
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-fade-in">
       <div className="bg-slate-50 px-6 py-4 border-b border-slate-100 flex justify-between items-center">
@@ -20,24 +63,36 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question, selectedOp
       </div>
       
       <div className="p-6 md:p-8">
-        <h3 className="text-lg md:text-xl text-slate-800 font-medium mb-4 leading-relaxed whitespace-pre-wrap">
-          {question.text}
-        </h3>
+        <div className="mb-6">
+          <h3 className="text-lg md:text-xl text-slate-800 font-medium leading-relaxed">
+            {question.text}
+          </h3>
+          {question.subText && (
+            <p className="text-slate-600 mt-2 italic text-sm md:text-base border-l-4 border-slate-200 pl-3">
+              {question.subText}
+            </p>
+          )}
+        </div>
         
         {question.equation && (
-          <div className="bg-slate-50 border border-slate-100 rounded-lg p-6 mb-8 overflow-x-auto">
-             {/* 
-                whitespace-pre is essential for ASCII art (fractions, matrices) to line up correctly.
-                min-w-max ensures the content doesn't wrap inside the scrolling container.
-             */}
-            <div className="font-mono text-base md:text-lg text-slate-800 whitespace-pre min-w-max leading-relaxed">
-              {question.equation}
-            </div>
+          <div className="bg-brand-50/30 border border-brand-100 rounded-lg p-6 mb-8 flex justify-center items-center min-h-[100px]">
+            {error ? (
+              <div className="text-red-500 text-sm font-mono bg-red-50 p-2 rounded">
+                Error visualizando la fórmula: {question.equation}
+              </div>
+            ) : htmlEquation ? (
+              <div 
+                className="text-slate-800 w-full overflow-x-auto"
+                dangerouslySetInnerHTML={{ __html: htmlEquation }} 
+              />
+            ) : (
+              <div className="flex items-center gap-2 text-slate-400">
+                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce delay-100"></div>
+                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce delay-200"></div>
+              </div>
+            )}
           </div>
-        )}
-
-        {question.subText && (
-          <p className="text-slate-600 mb-6 italic">{question.subText}</p>
         )}
 
         <div className="space-y-3">
@@ -54,16 +109,11 @@ export const QuestionCard: React.FC<QuestionCardProps> = ({ question, selectedOp
                   }`}
               >
                 <div className="flex items-start gap-4">
-                  <div className={`flex-shrink-0 w-6 h-6 rounded-full border-2 flex items-center justify-center transition-colors
-                    ${isSelected ? 'border-brand-500 bg-brand-500 text-white' : 'border-slate-300 group-hover:border-brand-400'}`}>
-                    {isSelected && (
-                      <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={3} d="M5 13l4 4L19 7" />
-                      </svg>
-                    )}
+                  <div className={`flex-shrink-0 w-8 h-8 rounded-full border-2 flex items-center justify-center transition-colors text-sm font-bold
+                    ${isSelected ? 'border-brand-500 bg-brand-500 text-white' : 'border-slate-300 text-slate-400 group-hover:border-brand-400 group-hover:text-brand-400'}`}>
+                    {option.id.toUpperCase()}
                   </div>
-                  <span className={`${isSelected ? 'font-medium' : 'font-normal'}`}>
-                    <span className="font-bold mr-2">{option.id})</span>
+                  <span className={`py-1 ${isSelected ? 'font-medium' : 'font-normal'}`}>
                     {option.text}
                   </span>
                 </div>

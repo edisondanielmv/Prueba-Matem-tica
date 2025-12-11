@@ -6,6 +6,16 @@ import { Button } from './components/Button';
 import { UploadSection } from './components/UploadSection';
 import { submitAssessment } from './services/submissionService';
 
+// Algoritmo Fisher-Yates para una mezcla perfectamente aleatoria
+function shuffleArray<T>(array: T[]): T[] {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+}
+
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.INTRO);
   const [studentName, setStudentName] = useState('');
@@ -21,17 +31,74 @@ const App: React.FC = () => {
 
   const handleStartQuiz = () => {
     if (!studentName.trim() || !studentId.trim()) {
-      setErrors(['Por favor ingrese su nombre y ID para comenzar.']);
+      setErrors(['Por favor ingrese su nombre y su número de cédula para comenzar.']);
       return;
     }
     
-    // Shuffle and pick 7 random questions
-    const shuffled = [...allQuestions].sort(() => 0.5 - Math.random());
-    const selected = shuffled.slice(0, 7);
-    setQuizQuestions(selected);
+    // --- LÓGICA ANTI-REPETICIÓN ---
+    const STORAGE_KEY = 'math_quiz_seen_ids_v1';
+    let seenIds: number[] = [];
+    
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        seenIds = JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error("Error leyendo historial:", e);
+    }
+
+    // 1. Separar preguntas disponibles (no vistas) y ya vistas
+    const unseenQuestions = allQuestions.filter(q => !seenIds.includes(q.id));
+    const seenQuestions = allQuestions.filter(q => seenIds.includes(q.id));
+    
+    const QUIZ_SIZE = 7;
+    let selectedQuestions: Question[] = [];
+
+    // 2. Mezclar ambos grupos aleatoriamente
+    const shuffledUnseen = shuffleArray(unseenQuestions);
+    const shuffledSeen = shuffleArray(seenQuestions);
+
+    // 3. Selección prioritaria
+    if (shuffledUnseen.length >= QUIZ_SIZE) {
+      // Si hay suficientes preguntas nuevas, usamos solo esas
+      selectedQuestions = shuffledUnseen.slice(0, QUIZ_SIZE);
+    } else {
+      // Si no alcanzan, usamos todas las nuevas y completamos con las antiguas
+      selectedQuestions = [
+        ...shuffledUnseen,
+        ...shuffledSeen.slice(0, QUIZ_SIZE - shuffledUnseen.length)
+      ];
+    }
+
+    // 4. Actualizar el historial de preguntas vistas
+    const newSeenIds = [...seenIds, ...selectedQuestions.map(q => q.id)];
+    // Eliminar duplicados en el historial
+    let uniqueSeenIds = Array.from(new Set(newSeenIds));
+
+    // Si ya hemos visto TODO el banco de preguntas, reiniciamos el ciclo
+    if (uniqueSeenIds.length >= allQuestions.length) {
+      uniqueSeenIds = selectedQuestions.map(q => q.id);
+    }
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(uniqueSeenIds));
+
+    // 5. Mezcla final
+    setQuizQuestions(shuffleArray(selectedQuestions));
 
     setErrors([]);
     setAppState(AppState.QUIZ);
+    window.scrollTo(0, 0);
+  };
+
+  const handleReset = () => {
+    setStudentName('');
+    setStudentId('');
+    setAnswers({});
+    setFiles([]);
+    setQuizQuestions([]);
+    setErrors([]);
+    setAppState(AppState.INTRO);
     window.scrollTo(0, 0);
   };
 
@@ -43,12 +110,20 @@ const App: React.FC = () => {
   };
 
   const handleQuizComplete = () => {
-    // Check if all displayed questions are answered
-    const unanswered = quizQuestions.filter(q => !answers[q.id]);
-    if (unanswered.length > 0) {
-      alert(`Por favor responda todas las preguntas. Faltan: ${unanswered.length}`);
-      return;
+    const unansweredCount = quizQuestions.filter(q => !answers[q.id]).length;
+    const answeredCount = quizQuestions.length - unansweredCount;
+    
+    if (unansweredCount > 0) {
+      const confirmProceed = confirm(
+        `Ha respondido ${answeredCount} de ${quizQuestions.length} preguntas.\n\n` +
+        `Las ${unansweredCount} preguntas sin responder se calificarán con 0 puntos.\n\n` +
+        `¿Desea finalizar la evaluación de todas formas?`
+      );
+      if (!confirmProceed) {
+        return;
+      }
     }
+    
     setAppState(AppState.UPLOAD);
     window.scrollTo(0, 0);
   };
@@ -56,17 +131,16 @@ const App: React.FC = () => {
   const calculateScoreValue = () => {
     let correct = 0;
     quizQuestions.forEach(q => {
+      // Si no hay respuesta (undefined), no suma puntos (equivale a 0)
       if (answers[q.id] === q.correctAnswer) correct++;
     });
-    // Calculate score out of 20
-    // formula: (correct / total) * 20
     const score20 = (correct / quizQuestions.length) * 20;
     return score20;
   };
 
   const handleFinalSubmit = async () => {
     if (files.length === 0) {
-      if (!confirm("No ha subido ninguna imagen de evidencia. ¿Está seguro que desea enviar sin sustento? Esto afectará su calificación.")) {
+      if (!confirm("No ha subido ninguna imagen de evidencia.\n\n¿Está seguro que desea enviar sin sustento? Esto podría afectar la validación de su nota.")) {
         return;
       }
     }
@@ -82,15 +156,14 @@ const App: React.FC = () => {
     };
     
     const finalScore = calculateScoreValue();
-
-    // Prepare detailed report for the submission service (3rd argument)
     const pointsPerQuestion = 20 / quizQuestions.length;
+
     const detailedReport = quizQuestions.map(q => {
-      const selected = answers[q.id];
+      const selected = answers[q.id] || '(Sin respuesta)'; 
       const isCorrect = selected === q.correctAnswer;
       const pointsEarned = isCorrect ? pointsPerQuestion : 0;
       
-      return `P${q.id}: Eligió '${selected}' (Correcta: '${q.correctAnswer}') -> ${pointsEarned.toFixed(2)}/${pointsPerQuestion.toFixed(2)} pts`;
+      return `${q.label}: Eligió '${selected}' (Correcta: '${q.correctAnswer}') -> ${pointsEarned.toFixed(2)}/${pointsPerQuestion.toFixed(2)} pts`;
     }).join('\n');
 
     try {
@@ -134,6 +207,7 @@ const App: React.FC = () => {
             <li>El sistema seleccionará aleatoriamente <strong>7 ejercicios</strong> del banco de preguntas.</li>
             <li>La nota máxima es de <strong>20 puntos</strong>.</li>
             <li>Debe seleccionar la respuesta correcta para cada pregunta.</li>
+            <li>Puede dejar preguntas en blanco (valen 0 puntos).</li>
             <li>Al finalizar, <strong>debe subir fotos</strong> de sus hojas de resolución como evidencia. Puede subir múltiples imágenes.</li>
           </ul>
         </div>
@@ -150,13 +224,13 @@ const App: React.FC = () => {
             />
           </div>
           <div>
-            <label className="block text-sm font-medium text-slate-700 mb-1">ID Estudiante / Código</label>
+            <label className="block text-sm font-medium text-slate-700 mb-1">Número de Cédula</label>
             <input
               type="text"
               value={studentId}
               onChange={(e) => setStudentId(e.target.value)}
               className="w-full px-4 py-3 rounded-lg border border-slate-300 focus:ring-2 focus:ring-brand-500 focus:border-brand-500 outline-none transition-all"
-              placeholder="Ej: A00123456"
+              placeholder="Ej: 1712345678"
             />
           </div>
         </div>
@@ -204,7 +278,7 @@ const App: React.FC = () => {
 
       <div className="flex justify-end pt-6 pb-12">
         <Button onClick={handleQuizComplete} size="lg">
-          Siguiente: Cargar Evidencias &rarr;
+          {Object.keys(answers).length === quizQuestions.length ? 'Finalizar Evaluación' : 'Finalizar y Continuar'} &rarr;
         </Button>
       </div>
     </div>
@@ -265,7 +339,7 @@ const App: React.FC = () => {
           <p>Puede cerrar esta ventana de manera segura.</p>
         </div>
 
-        <Button onClick={() => window.location.reload()} variant="outline">
+        <Button onClick={handleReset} variant="outline">
           Nueva Evaluación
         </Button>
       </div>

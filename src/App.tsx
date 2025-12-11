@@ -6,6 +6,16 @@ import { Button } from './components/Button';
 import { UploadSection } from './components/UploadSection';
 import { submitAssessment } from './services/submissionService';
 
+// Algoritmo Fisher-Yates para una mezcla perfectamente aleatoria
+function shuffleArray<T>(array: T[]): T[] {
+  const newArray = [...array];
+  for (let i = newArray.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [newArray[i], newArray[j]] = [newArray[j], newArray[i]];
+  }
+  return newArray;
+}
+
 const App: React.FC = () => {
   const [appState, setAppState] = useState<AppState>(AppState.INTRO);
   const [studentName, setStudentName] = useState('');
@@ -25,10 +35,58 @@ const App: React.FC = () => {
       return;
     }
     
-    // Shuffle and pick 7 random questions
-    const shuffled = [...allQuestions].sort(() => 0.5 - Math.random());
-    const selected = shuffled.slice(0, 7);
-    setQuizQuestions(selected);
+    // --- LÓGICA ANTI-REPETICIÓN ---
+    const STORAGE_KEY = 'math_quiz_seen_ids_v1';
+    let seenIds: number[] = [];
+    
+    try {
+      const stored = localStorage.getItem(STORAGE_KEY);
+      if (stored) {
+        seenIds = JSON.parse(stored);
+      }
+    } catch (e) {
+      console.error("Error leyendo historial:", e);
+    }
+
+    // 1. Separar preguntas disponibles (no vistas) y ya vistas
+    const unseenQuestions = allQuestions.filter(q => !seenIds.includes(q.id));
+    const seenQuestions = allQuestions.filter(q => seenIds.includes(q.id));
+    
+    const QUIZ_SIZE = 7;
+    let selectedQuestions: Question[] = [];
+
+    // 2. Mezclar ambos grupos aleatoriamente
+    const shuffledUnseen = shuffleArray(unseenQuestions);
+    const shuffledSeen = shuffleArray(seenQuestions);
+
+    // 3. Selección prioritaria
+    if (shuffledUnseen.length >= QUIZ_SIZE) {
+      // Si hay suficientes preguntas nuevas, usamos solo esas
+      selectedQuestions = shuffledUnseen.slice(0, QUIZ_SIZE);
+    } else {
+      // Si no alcanzan, usamos todas las nuevas y completamos con las antiguas
+      selectedQuestions = [
+        ...shuffledUnseen,
+        ...shuffledSeen.slice(0, QUIZ_SIZE - shuffledUnseen.length)
+      ];
+    }
+
+    // 4. Actualizar el historial de preguntas vistas
+    const newSeenIds = [...seenIds, ...selectedQuestions.map(q => q.id)];
+    // Eliminar duplicados en el historial
+    let uniqueSeenIds = Array.from(new Set(newSeenIds));
+
+    // Si ya hemos visto TODO el banco de preguntas, reiniciamos el ciclo
+    // para que la próxima vez haya "nuevas" disponibles (rotación completa)
+    if (uniqueSeenIds.length >= allQuestions.length) {
+      // Guardamos solo las de ESTE examen como vistas, liberando el resto
+      uniqueSeenIds = selectedQuestions.map(q => q.id);
+    }
+
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(uniqueSeenIds));
+
+    // 5. Mezcla final para que las preguntas nuevas no aparezcan siempre primero
+    setQuizQuestions(shuffleArray(selectedQuestions));
 
     setErrors([]);
     setAppState(AppState.QUIZ);
