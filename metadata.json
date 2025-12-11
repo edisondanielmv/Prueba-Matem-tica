@@ -1,0 +1,7 @@
+{
+  "name": "MathAssessment Pro",
+  "description": "Evaluación de Matemáticas con soporte para carga de evidencias",
+  "requestFramePermissions": [
+    "camera"
+  ]
+}
